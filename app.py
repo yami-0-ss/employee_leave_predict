@@ -3,29 +3,34 @@ import pickle
 import numpy as np
 from flask import Flask, render_template, request, jsonify
 
-app = Flask(__name__)
-
-# Resolve absolute path to the pickle file on Vercel
+# Get absolute project root directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMPLATE_DIR = os.path.join(BASE_DIR, 'templates')
 MODEL_PATH = os.path.join(BASE_DIR, 'logistic_model.pkl')
 
-# Global variable to hold loaded model
+# Initialize Flask with explicit template directory
+app = Flask(__name__, template_folder=TEMPLATE_DIR)
+
+# Safe model load
 model = None
-model_load_error = None
+model_error = None
 
 try:
     if os.path.exists(MODEL_PATH):
         with open(MODEL_PATH, 'rb') as f:
             model = pickle.load(f)
     else:
-        model_load_error = f"Model file not found at path: {MODEL_PATH}"
+        model_error = f"Model file missing at: {MODEL_PATH}"
 except Exception as e:
-    model_load_error = f"Failed to load model: {str(e)}"
+    model_error = f"Failed to load pickle model: {str(e)}"
 
 
 @app.route('/', methods=['GET'])
 def home():
-    return render_template('index.html')
+    try:
+        return render_template('index.html')
+    except Exception as e:
+        return f"<h3>Render Error: {str(e)}</h3>", 500
 
 
 @app.route('/predict', methods=['POST'])
@@ -33,21 +38,23 @@ def predict():
     if model is None:
         return jsonify({
             'success': False,
-            'error': model_load_error or 'Model is not loaded.'
+            'error': model_error or 'Model instance not initialized.'
         }), 500
 
     try:
-        # Extract features from POST payload safely
-        education = float(request.form.get('Education', 0))
-        joining_year = float(request.form.get('JoiningYear', 2020))
-        city = float(request.form.get('City', 0))
-        payment_tier = float(request.form.get('PaymentTier', 1))
-        age = float(request.form.get('Age', 25))
-        gender = float(request.form.get('Gender', 0))
-        ever_benched = float(request.form.get('EverBenched', 0))
-        experience = float(request.form.get('ExperienceInCurrentDomain', 0))
+        # Check Form payload or JSON payload
+        data = request.form if request.form else (request.get_json(silent=True) or {})
 
-        # Array shape must match the 8 trained model features
+        # Parse inputs for the 8 features
+        education = float(data.get('Education', 0))
+        joining_year = float(data.get('JoiningYear', 2020))
+        city = float(data.get('City', 0))
+        payment_tier = float(data.get('PaymentTier', 1))
+        age = float(data.get('Age', 25))
+        gender = float(data.get('Gender', 0))
+        ever_benched = float(data.get('EverBenched', 0))
+        experience = float(data.get('ExperienceInCurrentDomain', 0))
+
         features = np.array([[
             education,
             joining_year,
@@ -75,12 +82,12 @@ def predict():
     except Exception as e:
         return jsonify({
             'success': False,
-            'error': f"Prediction error: {str(e)}"
+            'error': f"Prediction computation failed: {str(e)}"
         }), 400
 
 
-# WSGI handler exposure for serverless platforms like Vercel
-app_handler = app
+# Expose WSGI instance for Vercel auto-detection
+app = app
 
 if __name__ == '__main__':
     app.run(debug=True)
